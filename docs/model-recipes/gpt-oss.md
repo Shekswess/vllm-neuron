@@ -108,6 +108,9 @@ This path includes static and CPU-fallback tests, but must still pass compile,
 correctness, acceptance-length, and throughput gates on a real Trn2 instance.
 Start with greedy decoding and compare generated token IDs against the same
 server command without `--speculative-config` before benchmarking speedup.
+See the runnable
+[Trn2 TP8 DFlash example](../../examples/vllm_neuron/models/gpt_oss/20b/mxfp4/dflash/README.md)
+for the complete validation configuration.
 
 ## Tutorials
 
