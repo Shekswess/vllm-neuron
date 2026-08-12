@@ -6,7 +6,7 @@ the end-to-end deployment tutorial for gpt-oss 20B and 120B on Trn3 (MXFP4) or
 Trn2 (BF16). -->
 <!-- meta: keywords: vLLM, Neuron, gpt-oss, gpt-oss-20b, gpt-oss-120b, MoE,
 MXFP4, model recipe, model card, LLM serving, Trn2, Trn3, Trainium -->
-<!-- meta: date_updated: 2026-07-15 -->
+<!-- meta: date_updated: 2026-08-12 -->
 <!-- Content type: model-card -->
 <!-- Jira: NDOC-185 -->
 
@@ -50,6 +50,7 @@ cross-model feature compatibility matrix.
 | | Segmented prefill | ✅ |
 | | Prefix caching (APC) | ✅ |
 | | Speculative decoding (EAGLE3) | ✅ |
+| | Speculative decoding (DFlash, Trn2 BF16) | Preview |
 | | Disaggregated inference (1P1D / xPyD) | ✅ |
 | | On-device sampling (greedy, top-k, top-p) | ✅ |
 | **Serving** | Structured outputs / tool calling | ✅ |
@@ -59,6 +60,7 @@ cross-model feature compatibility matrix.
 **Status legend:**
 
 - ✅ Supported: integrated and tested for gpt-oss
+- Preview: integrated, with real-hardware validation still pending
 - ❌ Not supported: may be considered for future releases
 
 The [deployment tutorial](../tutorials/tutorial-gpt-oss.md) walks through
@@ -76,6 +78,36 @@ reasoning effort.
 | GSM8K-CoT | 88.8% |
 | AIME25 (avg@8, medium) | 78.75% |
 | GPQA-diamond (medium) | 72.22% |
+
+## DFlash preview on Trn2
+
+The initial DFlash integration targets `openai/gpt-oss-20b` with
+`z-lab/gpt-oss-20b-DFlash`. It deliberately enforces the first hardware
+validation envelope: BF16 target and KV cache, TP=8, seven speculative tokens,
+synchronous scheduling, and no chunked prefill, prefix caching, or disaggregated
+inference.
+
+```bash
+vllm serve openai/gpt-oss-20b \
+    --tensor-parallel-size 8 \
+    --dtype bfloat16 \
+    --max-model-len 8192 \
+    --max-num-batched-tokens 4096 \
+    --max-num-seqs 4 \
+    --no-async-scheduling \
+    --no-enable-chunked-prefill \
+    --no-enable-prefix-caching \
+    --hf-overrides '{"quantization_config": {}}' \
+    --speculative-config \
+      '{"method":"dflash","model":"z-lab/gpt-oss-20b-DFlash","num_speculative_tokens":7}' \
+    --additional-config \
+      '{"neuron_config":{"quantization":"bf16"}}'
+```
+
+This path includes static and CPU-fallback tests, but must still pass compile,
+correctness, acceptance-length, and throughput gates on a real Trn2 instance.
+Start with greedy decoding and compare generated token IDs against the same
+server command without `--speculative-config` before benchmarking speedup.
 
 ## Tutorials
 

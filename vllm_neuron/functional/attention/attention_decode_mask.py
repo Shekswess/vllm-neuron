@@ -1,13 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
-import torch
+import math
 from typing import Optional
 
-from torch import Tensor
-
 import nki
-import math
-
+import torch
 from nkilib.core.attention.gen_mask_tkg import gen_mask_tkg_hbm
+from torch import Tensor
 
 jitted_gen_mask = nki.jit()(gen_mask_tkg_hbm)
 
@@ -26,6 +24,7 @@ def gen_attention_decode_mask(
     block_len: int = 0,
     local_filled_slots: Optional[Tensor] = None,
     dcp_active_mask: Optional[Tensor] = None,
+    active_mask: Optional[Tensor] = None,
 ) -> Tensor:
     """
     Generate an attention mask for token-generation (TKG).
@@ -45,14 +44,15 @@ def gen_attention_decode_mask(
         local_filled_slots: Number of filled cache slots for DCP interleaved
                       caches. When provided, generates a flat mask (slots <
                       threshold are valid) bypassing the standard block-KV mask.
-        active_mask:  [s_active, bs, q_head, s_active] active-token mask.
-                      **Always required**.
+        active_mask:  Optional [s_active, bs, q_head, s_active] active-token
+                      mask. Defaults to the standard causal mask. DFlash passes
+                      an all-ones mask for its bidirectional proposal block.
 
     Returns:
         Tensor of shape [s_prior, bs, q_head, s_active] with values in {0, 1}.
 
     Raises:
-        ValueError: If ``active_mask is None``.
+        ValueError: If ``active_mask`` has an unexpected shape.
     """
     # DCP interleaved cache: flat mask based on filled slot count.
     # Prior cached tokens fill slots 0..local_filled_slots-1.
@@ -77,15 +77,24 @@ def gen_attention_decode_mask(
     if s_prior % P_MAX != 0:
         raise ValueError(f"s_prior ({s_prior}) must be divisible by {P_MAX}")
 
-    # Build causal mask over the two s_active dimensions (dim 0 and dim 3)
-    causal = torch.triu(
-        torch.ones(s_active, s_active, dtype=torch.float32, device=pos_ids.device)
-    )
-
-    # Broadcast to [s_active, bs, q_head, s_active]
-    active_mask = (
-        causal[:, None, None, :].expand(s_active, bs, q_head, s_active).contiguous()
-    )
+    if active_mask is None:
+        # Standard autoregressive decode: active token k can attend active
+        # tokens up to k. DFlash supplies an all-ones mask instead so every
+        # proposal query can see the complete proposal block.
+        causal = torch.triu(
+            torch.ones(s_active, s_active, dtype=torch.float32, device=pos_ids.device)
+        )
+        active_mask = (
+            causal[:, None, None, :]
+            .expand(s_active, bs, q_head, s_active)
+            .contiguous()
+        )
+    else:
+        expected = (s_active, bs, q_head, s_active)
+        if tuple(active_mask.shape) != expected:
+            raise ValueError(
+                f"active_mask must have shape {expected}, got {tuple(active_mask.shape)}"
+            )
 
     if _can_use_kernel(pos_ids, bs, s_active, s_prior):
         wrapped = wrap_nki(jitted_gen_mask)

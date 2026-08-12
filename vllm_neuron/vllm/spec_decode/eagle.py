@@ -5,9 +5,9 @@ import time
 
 import torch
 import torch.nn as nn
-from vllm.v1.attention.backend import AttentionMetadata
 from vllm.config import VllmConfig
 from vllm.distributed.parallel_state import get_world_group
+from vllm.v1.attention.backend import AttentionMetadata
 from vllm.v1.kv_cache_interface import KVCacheConfig
 
 from vllm_neuron import envs
@@ -29,6 +29,8 @@ logger = logging.getLogger(__name__)
 
 
 class EagleProposer:
+    expected_method = "eagle3"
+
     def __init__(
         self,
         vllm_config: VllmConfig,
@@ -41,7 +43,7 @@ class EagleProposer:
 
         self.draft_model_config = self.speculative_config.draft_model_config
         self.method = self.speculative_config.method
-        assert self.method == "eagle3"
+        assert self.method == self.expected_method
 
         self.device = device
         self.on_device_sampling = on_device_sampling
@@ -343,6 +345,12 @@ class EagleProposer:
                 self.device,
                 self.vllm_config.load_config.download_dir,
             )
+            if hasattr(self.model, "load_target_weights"):
+                self.model.load_target_weights(
+                    self.vllm_config.model_config.model,
+                    self.device,
+                    self.vllm_config.load_config.download_dir,
+                )
 
             logger.info("Moving draft model to device: %s", self.device)
             self.model = self.model.to(self.device)

@@ -80,6 +80,7 @@ Feature support is at the framework level. See the model cards in [`docs/model-r
 | | Compile cache (local/remote) | ✅ |
 | | CPU compilation | ✅ |
 | **Speculative Decoding** | EAGLE3 | ✅ |
+| | DFlash (GPT-OSS 20B, Trn2 BF16) | Preview |
 | | MTP | ❌ |
 | **Quantization** | BF16 | ✅ |
 | | FP8 | ✅ |
