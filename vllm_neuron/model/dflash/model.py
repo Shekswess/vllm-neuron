@@ -407,7 +407,7 @@ class DFlashDraftModel(nn.Module):
         active_mask: torch.Tensor,
         rank: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        del rank, query_slot_mapping
+        del query_slot_mapping
         context_states = self.hidden_norm(self.fc(target_hidden_states))
         block_size = next(iter(attn_metadata.values()))["block_size"]
         for layer in self.layers:
@@ -418,7 +418,7 @@ class DFlashDraftModel(nn.Module):
                 block_size,
             )
 
-        hidden_states = self.embed_tokens(input_ids, scatter_tokens=False)
+        hidden_states = self.embed_tokens(input_ids, scatter_tokens=False, rank=rank)
         for layer in self.layers:
             hidden_states = layer(hidden_states, positions, attn_metadata, active_mask)
         hidden_states = self.norm(hidden_states)

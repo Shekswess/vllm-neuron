@@ -96,6 +96,27 @@ def test_dflash_registry_and_sample_selection():
     )
 
 
+def test_dflash_partial_rejection_rewinds_context_boundary():
+    proposer = object.__new__(DFlashProposer)
+    proposer.model = type(
+        "Model", (), {"config": type("Config", (), {"vocab_size": 1000})()}
+    )()
+    proposer.num_speculative_tokens = 7
+    last_token_indices = torch.tensor([7, 15], dtype=torch.long)
+    samples = torch.tensor(
+        [
+            [101, -1, -1, -1, -1, -1, -1, -1],
+            [201, 202, 203, -1, -1, -1, -1, -1],
+        ],
+        dtype=torch.int32,
+    )
+
+    torch.testing.assert_close(
+        proposer._last_valid_context_indices(last_token_indices, samples),
+        torch.tensor([0, 10], dtype=torch.long),
+    )
+
+
 def test_dflash_active_block_is_bidirectional():
     query_len = 8
     positions = torch.arange(32, 32 + query_len, dtype=torch.float32).view(1, -1)

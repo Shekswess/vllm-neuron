@@ -7,6 +7,7 @@ import time
 import torch
 
 from vllm_neuron.compile.backend import model_forward_context
+from vllm_neuron.compile.platform import get_platform_target
 from vllm_neuron.functional.attention.attention_decode_mask import (
     gen_attention_decode_mask,
 )
@@ -64,6 +65,20 @@ class DFlashProposer(EagleProposer):
         if vllm_config.parallel_config.tensor_parallel_size != 8:
             raise ValueError(
                 "Initial DFlash support is validated for tensor_parallel_size=8"
+            )
+        platform = get_platform_target()
+        if platform != "trn2":
+            raise ValueError(
+                "Initial DFlash support is validated only on Trn2; "
+                f"detected platform {platform!r}"
+            )
+        target_quantization = vllm_config.additional_config.get(
+            "neuron_config", {}
+        ).get("quantization")
+        if target_quantization not in (None, "bf16"):
+            raise ValueError(
+                "Initial Trn2 DFlash support requires quantization='bf16', "
+                f"got {target_quantization!r}"
             )
         target_config = vllm_config.model_config.hf_text_config
         target_type = target_config.model_type
@@ -132,12 +147,28 @@ class DFlashProposer(EagleProposer):
             ),
         }
 
-    def _last_valid_sample(self, raw_sampled_token_ids: torch.Tensor) -> torch.Tensor:
+    def _valid_sample_count(self, raw_sampled_token_ids: torch.Tensor) -> torch.Tensor:
         valid = (raw_sampled_token_ids >= 0) & (
             raw_sampled_token_ids < self.model.config.vocab_size
         )
-        last = valid.to(torch.int32).sum(dim=1).sub(1).clamp_min(0)
+        return valid.to(torch.int32).sum(dim=1)
+
+    def _last_valid_sample(self, raw_sampled_token_ids: torch.Tensor) -> torch.Tensor:
+        valid_count = self._valid_sample_count(raw_sampled_token_ids)
+        last = valid_count.sub(1).clamp_min(0)
         return raw_sampled_token_ids.gather(1, last.unsqueeze(1)).squeeze(1)
+
+    def _last_valid_context_indices(
+        self,
+        last_token_indices: torch.Tensor,
+        raw_sampled_token_ids: torch.Tensor,
+    ) -> torch.Tensor:
+        """Move each context boundary back over rejected verification tokens."""
+        if raw_sampled_token_ids.shape[1] == 1:
+            return last_token_indices
+        valid_count = self._valid_sample_count(raw_sampled_token_ids)
+        num_rejected = (self.num_speculative_tokens + 1 - valid_count).clamp_min(0)
+        return last_token_indices - num_rejected.to(last_token_indices.dtype)
 
     def propose(
         self,
@@ -183,6 +214,9 @@ class DFlashProposer(EagleProposer):
         )
 
         bonus = self._last_valid_sample(raw_sampled_token_ids)
+        last_token_indices = self._last_valid_context_indices(
+            last_token_indices, raw_sampled_token_ids
+        )
         input_ids = torch.full(
             (batch_size, query_len),
             self.model.mask_token_id,
